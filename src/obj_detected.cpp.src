@@ -37,6 +37,9 @@
 #include <message_filters/sync_policies/exact_time.h>
 #include <message_filters/sync_policies/approximate_time.h>
 
+// #include <obj_detected/ball_pose.h>
+// #include <obj_detected/pred_draw.h>
+
 // #include <time.h>
 #include <Eigen/Core>
 // #include <array>
@@ -90,8 +93,7 @@ private:
 	image_transport::SubscriberFilter *subImageColor, *subImageDepth;
 	message_filters::Subscriber<sensor_msgs::CameraInfo> *subCameraInfoColor, *subCameraInfoDepth;
 
-	image_transport::Subscriber suber_color_it;
-	ros::Subscriber suber_color;
+	// ros::Subscriber suber_color;
 	// ros::Subscriber suber_depth;
 
 	// 消息同步,严格时间戳对齐
@@ -100,9 +102,6 @@ private:
 
 	typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image, sensor_msgs::CameraInfo, sensor_msgs::CameraInfo> Appsyncpolicy; //时间戳对齐规则
 	message_filters::Synchronizer<Appsyncpolicy> *syncApp;
-
-	// typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::CameraInfo> SingleAppsyncpolicy; //时间戳对齐规则
-	// message_filters::Synchronizer<SingleAppsyncpolicy> *singleSyncApp;
 
 	std::mutex lock;
 
@@ -128,13 +127,11 @@ private:
 
 	posXYZ last_pos;
 
-	int saveCnt = 0;
-
 public:
 	Detector(const std::string &topic_color, const std::string &topic_depth, const std::string &topic_ball_pose_pub)
 		: topic_color_recv(topic_color), topic_depth_recv(topic_depth), spinner(0), nh("~"),
 		  color_update_flag(false), depth_update_flag(false), topic_ball_pose_pub(topic_ball_pose_pub), you_can_detect_it(false),
-		  it(nh), queueSize(10), get_camera_info(true), obj_pos_non_move_range(0.01), distance_to_wall(3)
+		  it(nh), queueSize(5), get_camera_info(true), obj_pos_non_move_range(0.01), distance_to_wall(3)
 	{
 		camera_Matrix_color = cv::Mat::zeros(3, 3, CV_64F);
 		camera_Matrix_depth = cv::Mat::zeros(3, 3, CV_64F);
@@ -160,37 +157,28 @@ private:
 
 		std::string topicCameraInfoColor = topic_color_recv.substr(0, topic_color_recv.rfind('/')) + "/camera_info";
 		std::string topicCameraInfoDepth = topic_depth_recv.substr(0, topic_depth_recv.rfind('/')) + "/camera_info";
-		ROS_INFO("camera info is :\n%s\n%s", topicCameraInfoColor.c_str(), topicCameraInfoDepth.c_str());
-		// {
-			image_transport::TransportHints hints("compressed");
-			// //如果换成compressed会不会好一点，但是之前一直用的都是raw
-			// //这里为神码还要camerainfo呢
-			// subImageColor = new image_transport::SubscriberFilter(it, topic_color_recv, queueSize, hints);
-			// // subImageDepth = new image_transport::SubscriberFilter(it, topic_depth_recv, queueSize, hints);
-			subImageColor = new image_transport::SubscriberFilter(it, topic_color_recv, queueSize);
-			subImageDepth = new image_transport::SubscriberFilter(it, topic_depth_recv, queueSize);
-			subCameraInfoColor = new message_filters::Subscriber<sensor_msgs::CameraInfo>(nh, topicCameraInfoColor, queueSize);
-			subCameraInfoDepth = new message_filters::Subscriber<sensor_msgs::CameraInfo>(nh, topicCameraInfoDepth, queueSize);
+		image_transport::TransportHints hints("compressed");
+		//如果换成compressed会不会好一点，但是之前一直用的都是raw
+		//这里为神码还要camerainfo呢
+		subImageColor = new image_transport::SubscriberFilter(it, topic_color_recv, queueSize, hints);
+		// subImageDepth = new image_transport::SubscriberFilter(it, topic_depth_recv, queueSize, hints);
+		subImageDepth = new image_transport::SubscriberFilter(it, topic_depth_recv, queueSize);
+		subCameraInfoColor = new message_filters::Subscriber<sensor_msgs::CameraInfo>(nh, topicCameraInfoColor, queueSize);
+		subCameraInfoDepth = new message_filters::Subscriber<sensor_msgs::CameraInfo>(nh, topicCameraInfoDepth, queueSize);
 
-			syncApp = new message_filters::Synchronizer<Appsyncpolicy>(Appsyncpolicy(queueSize), *subImageColor, *subImageDepth, *subCameraInfoColor, *subCameraInfoDepth);
-			syncApp->registerCallback(boost::bind(&Detector::callback_color_depth, this, _1, _2, _3, _4));
-			// 或者
-			// singleSyncApp = new message_filters::Synchronizer<SingleAppsyncpolicy>(SingleAppsyncpolicy(queueSize), *subImageColor, *subCameraInfoColor);
-			// singleSyncApp->registerCallback(boost::bind(&Detector::callback_color_info, this, _1, _2));
-		// }
-
-		// suber_color = nh.subscribe(topic_color_recv, queueSize, &Detector::callback_color, this);
-
+		// suber_color = nh.subscribe(topic_color_recv, 1, &Detector::callback_color, this);
 		// suber_depth = nh.subscribe(topic_depth_recv, 1, &Detector::callback_depth, this);
 		// ros::AsyncSpinner spinner(3); // Use 3 threads
 		// spinner.start();
+
+		syncApp = new message_filters::Synchronizer<Appsyncpolicy>(Appsyncpolicy(queueSize), *subImageColor, *subImageDepth, *subCameraInfoColor, *subCameraInfoDepth);
+		syncApp->registerCallback(boost::bind(&Detector::callback_color_depth, this, _1, _2, _3, _4));
 
 		//使用时间戳精准匹配模式
 		// syncExact = new message_filters::Synchronizer<ExactSyncPolicy>(ExactSyncPolicy(queueSize), *subImageColor, *subImageDepth, *subCameraInfoColor, *subCameraInfoDepth);
 		// syncExact->registerCallback(boost::bind(&Detector::callback_color_depth, this, _1, _2, _3, _4));
 
 		spinner.start();
-		ROS_INFO("obj_detecting start...");
 
 		std::chrono::milliseconds duration(1);
 		while (!color_update_flag || !depth_update_flag)
@@ -224,35 +212,12 @@ private:
 		ROS_INFO("stoped...");
 	}
 
-	void color_callback(const sensor_msgs::Image::ConstPtr imageColor)
-	{
-		cv::Mat color, depth;
-
-		readImage(imageColor, color);
-
-		if (color.type() == CV_16U)
-		{
-			cv::Mat tmp;
-			color.convertTo(tmp, CV_8U, 0.02);
-			cv::cvtColor(tmp, color, CV_GRAY2BGR);
-		}
-
-		lock.lock();
-		this->color_frame = color;
-		color_update_flag = true;
-		depth_update_flag = true;
-		// recved_color_time = std::chrono::high_resolution_clock::now();
-
-		ros_recved_color_time = ros::Time::now();
-		lock.unlock();
-	}
-
 	void callback_color_depth(const sensor_msgs::Image::ConstPtr imageColor, const sensor_msgs::Image::ConstPtr imageDepth,
 							  const sensor_msgs::CameraInfo::ConstPtr cameraInfoColor, const sensor_msgs::CameraInfo::ConstPtr cameraInfoDepth)
 	{
-		// ROS_INFO("callback please check the timestamp");
+		ROS_INFO("callback please check the timestamp");
 		cv::Mat color, depth;
-		cout << "sync" << endl;
+		// cout << "来了老弟～" << endl;
 		//读取内参？
 		//这两步没看懂，先不抄了，这个相机信息到这里就终结了，他获取了相机矩阵，然后lookup了
 		//一会打印以下，看一看获取和不获取，信息是否一样
@@ -279,13 +244,28 @@ private:
 		lock.lock();
 		this->color_frame = color;
 		this->depth_frame = depth;
+		{
+
+			// cv::Mat tmp_img_u8;
+			// depth_frame.convertTo(tmp_img_u8, CV_8UC1, 1.0 / 256);
+			// cv::Mat hist_info;
+			// const int hist_size = 128;
+			// float hist_range[] = {0, 128};
+			// const float *hist_ranges[] = {hist_range};
+			// const int chs = 0; // image channels
+			// // 这里对应图5中间那张图，计算某个亮度的像素的数量
+			// /* compute histogram from depth image */
+			// cv::calcHist(&tmp_img_u8, 1, &chs, cv::Mat(), hist_info, 1, &hist_size,
+			// 			 &hist_ranges[0]);
+			// cout << hist_info << endl;
+		}
+
 		color_update_flag = true;
 		depth_update_flag = true;
 		// recved_color_time = std::chrono::high_resolution_clock::now();
 
 		ros_recved_color_time = ros::Time::now();
 		lock.unlock();
-		// cout << "flag:" << color_update_flag << depth_update_flag << endl;
 	}
 
 	// 别问，问就是抄的
@@ -305,51 +285,24 @@ private:
 		pCvImage->image.copyTo(image);
 	}
 
-	void callback_color_info(const sensor_msgs::Image::ConstPtr image_data, const sensor_msgs::CameraInfo::ConstPtr cameraInfoColor)
-	{
-		cout << "color" << endl;
-		// 抄的readImage里的
-		// 声明一个CvImage指针
-		cv::Mat color_frame_callback;
-		cv_bridge::CvImageConstPtr pCvImage;
-		//将ROS消息中的图象信息提取，生成新cv类型的图象，复制给CvImage指针
-		pCvImage = cv_bridge::toCvShare(image_data, image_data->encoding);
-		pCvImage->image.copyTo(color_frame_callback);
-		if (0)
-		{
-			// save all color_img
-			imwrite("/home/free/catkin_cd/datasets/block_image/kinectdk_all_img/" + to_string(saveCnt) + ".png", color_frame_callback);
-			saveCnt++;
-			return;
-		}
-		lock.lock();
-		this->color_frame = color_frame_callback.clone();
-		color_update_flag = true;
-		depth_update_flag = true;
-		recved_color_time = std::chrono::high_resolution_clock::now();
-		lock.unlock();
-		// std::cout << "colorsrze" << (this->color_frame).rows << " " << (this->color_frame).cols << std::endl;
-	}
-
-	//callback_color和callback_depth废弃了
-	void callback_color(const sensor_msgs::Image::ConstPtr image_data)
-	{
-		// cout << "color" << endl;
-		// 抄的readImage里的
-		// 声明一个CvImage指针
-		cv::Mat color_frame_callback;
-		cv_bridge::CvImageConstPtr pCvImage;
-		//将ROS消息中的图象信息提取，生成新cv类型的图象，复制给CvImage指针
-		pCvImage = cv_bridge::toCvShare(image_data, image_data->encoding);
-		pCvImage->image.copyTo(color_frame_callback);
-		lock.lock();
-		this->color_frame = color_frame_callback.clone();
-		color_update_flag = true;
-		depth_update_flag = true;
-		recved_color_time = std::chrono::high_resolution_clock::now();
-		lock.unlock();
-		// std::cout << "colorsrze" << (this->color_frame).rows << " " << (this->color_frame).cols << std::endl;
-	}
+	// //callback_color和callback_depth废弃了
+	// void callback_color(const sensor_msgs::Image::ConstPtr image_data)
+	// {
+	// 	cout << "彩色" << endl;
+	// 	// 抄的readImage里的
+	// 	// 声明一个CvImage指针
+	// 	cv::Mat color_frame_callback;
+	// 	cv_bridge::CvImageConstPtr pCvImage;
+	// 	//将ROS消息中的图象信息提取，生成新cv类型的图象，复制给CvImage指针
+	// 	pCvImage = cv_bridge::toCvShare(image_data, image_data->encoding);
+	// 	pCvImage->image.copyTo(color_frame_callback);
+	// 	lock.lock();
+	// 	this->color_frame = color_frame_callback.clone();
+	// 	color_update_flag = true;
+	// 	recved_color_time = std::chrono::high_resolution_clock::now();
+	// 	lock.unlock();
+	// 	// std::cout << "colorsrze" << (this->color_frame).rows << " " << (this->color_frame).cols << std::endl;
+	// }
 
 	// void callback_depth(const sensor_msgs::Image::ConstPtr image_data)
 	// {
@@ -374,14 +327,11 @@ private:
 		// 	-0.17015, -0.95443, -0.088936, 718.39,
 		// 	0, 0, 0, 1;
 		cv::Mat color_img, depth_img;
-		cout << "--isrunning" << isRunning << endl;
-		cout << "--rosok" << ros::ok() << endl;
 		while (ros::ok() && isRunning)
 		{
 			// posXYZ camera_coord;
 			if (color_update_flag && depth_update_flag)
 			{
-				cout << "---kkk---" << endl;
 				lock.lock();
 				color_img = (this->color_frame).clone();
 				depth_img = (this->depth_frame).clone();
@@ -398,18 +348,6 @@ private:
 				circle_xyr obj_tennis_info = {0, 0, -1};
 
 				obj_tennis_info = detect_tennis_by_color(color_img);
-				if (0)
-				{
-					if (obj_tennis_info.r > 1 && obj_tennis_info.r < 400000)
-					{
-						draw_obj_target(color_img, obj_tennis_info);
-					}
-					// imwrite("/home/free/catkin_cd/datasets/block_image/kinectdk_all_img/" + to_string(saveCnt) + ".png", color_img);
-					saveCnt++;
-					// 仅为了获取真实彩色图
-					continue;
-				}
-
 				// cout << "tennis info(x,y,r):" << obj_tennis_info.x << " " << obj_tennis_info.y << "  " << obj_tennis_info.r << endl;
 				//这里应该有一步判断。如果半径大于1就识别到了,然后执行下列操作
 				//其实这里不应该让他大于1,拿远一点试一试多少比较合适
@@ -417,7 +355,7 @@ private:
 				{
 					if (detected_frame_count == 1)
 					{
-						// cout << "firstle" << endl;
+						cout << "firstle" << endl;
 						// zero_time = std::chrono::high_resolution_clock::now();
 						ros_zero_time = ros_recved_color_time;
 						elapsed = 0;
@@ -432,8 +370,8 @@ private:
 						// elapsed = std::chrono::duration_cast<std::chrono::microseconds>(recved_color_time - zero_time).count() / 1000.0;
 						elapsed = (ros::Time::now() - ros_zero_time).toSec();
 					}
-					// cout << "elapsed is " << elapsed << "s" << endl;
-					// cout << "detected_frame_count: " << detected_frame_count++ << endl;
+					cout << "elapsed is " << elapsed << "s" << endl;
+					cout << "detected_frame_count: " << detected_frame_count++ << endl;
 
 					posXYZ camera_coord;
 					posXYZ world_coord;
@@ -453,11 +391,8 @@ private:
 
 					//判断pos的运动是否超出了范围
 					bool isMoving = moving_or_stationary(world_coord);
-					if (1)
-					{
 
-						draw_obj_info(color_img, obj_tennis_info, camera_coord, world_coord, elapsed);
-					}
+					draw_obj_info(color_img, obj_tennis_info, camera_coord, world_coord, elapsed);
 					if ((camera_coord.z > 0) && ((camera_coord.z / 1000.0) < distance_to_wall) && isMoving)
 					{
 						// 应该在这里把它发出去
@@ -471,17 +406,17 @@ private:
 						ball_pose_info.header.frame_id = detected_frame_count;
 						ball_camera_pose_pub(ball_pose_info);
 					}
+					if (isMoving)
+					{
+						//在这画个图
+					}
 					cout << "--------------------------------------" << endl;
 				}
 				// else
 				// 	vis = color_img;
-				if (1)
-				{
-
-					// imshow("visualization (Press Esc to exit)", color_img);
-					if (waitKey(5000) == 27)
-						isRunning = false;
-				}
+				// imshow("visualization (Press Esc to exit)", color_img);
+				// if (waitKey(1) == 27)
+				// 	isRunning = false;
 			}
 		}
 	}
@@ -540,16 +475,13 @@ private:
 			int radius = 0;
 
 			find_max_area(&contours_green, &contours_green_area_vec, &center, &radius);
-			// cout << "center:" << center << " radius:" << radius << endl;
+			cout << "center:" << center << " radius:" << radius << endl;
 
-			cout << "edge detect: " << ((double)(clock() - start_time) / CLOCKS_PER_SEC) * 1000 << "ms" << endl;
+			cout << "detect once: " << (double)(clock() - start_time) / CLOCKS_PER_SEC << "s" << endl;
 			return circle_xyr{center.x, center.y, radius};
 		}
 		else
-		{
-			cout << "empty detect: " << ((double)(clock() - start_time) / CLOCKS_PER_SEC) * 1000 << "ms" << endl;
 			return circle_xyr{-1, -1, -1};
-		}
 	}
 
 	//抄来的函数
@@ -592,45 +524,25 @@ private:
 
 	void draw_obj_info(cv::Mat &color_img, const circle_xyr &obj_tennis_info, const posXYZ &camera_coord, const posXYZ &world_coord, const double elapsed)
 	{
-
 		Point center(obj_tennis_info.x, obj_tennis_info.y);
 		int radius = obj_tennis_info.r;
 		if (radius > 1)
 		{
-			cv::circle(color_img, center, radius, cv::Scalar(0, 255, 0), 3);
+			cv::circle(color_img, center, radius, cv::Scalar(0, 255, 255), 2);
 			cv::circle(color_img, center, 5, cv::Scalar(0, 0, 255), -1);
-			imwrite("/home/free/catkin_cd/datasets/block_image/kinectdk_detect_img_label/" + to_string(saveCnt) + ".jpg", color_img);
 		}
 		else
 			cout << "半径太小了" << endl;
-		if (1)
-		{
-			//显示彩色图中圆心坐标
-			string text1 = "pixel (x,y),r (" + to_string(center.x) + "," + to_string(center.y) + ")" + "," + to_string(radius);
-			cv::putText(color_img, text1, cv::Point(10, 10), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
-			string text2 = "camera(x,y,z) (" + to_string(camera_coord.x / 1000.0) + "," + to_string(camera_coord.y / 1000.0) + "," + to_string(camera_coord.z / 1000.0) + ")";
-			cv::putText(color_img, text2, cv::Point(10, 30), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
-			string text3 = "world (x,y,z) (" + to_string(world_coord.x / 1000.0) + "," + to_string(world_coord.y / 1000.0) + "," + to_string(world_coord.z / 1000.0) + ")";
-			cv::putText(color_img, text3, cv::Point(10, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
-			string text4 = "time/s " + to_string(elapsed / 1000.0);
-			cv::putText(color_img, text4, cv::Point(10, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
-			// return color_img;
-		}
-	}
-
-	void draw_obj_target(cv::Mat &color_img, const circle_xyr &obj_tennis_info)
-	{
-
-		Point center(obj_tennis_info.x, obj_tennis_info.y);
-		int radius = obj_tennis_info.r;
-		if (radius > 1)
-		{
-			cv::circle(color_img, center, radius, cv::Scalar(0, 255, 0), 3);
-			cv::circle(color_img, center, 5, cv::Scalar(0, 0, 255), -1);
-			imwrite("/home/free/catkin_cd/datasets/block_image/kinectdk_detect_img_label/" + to_string(saveCnt) + ".jpg", color_img);
-		}
-		else
-			cout << "半径太小了" << endl;
+		//显示彩色图中圆心坐标
+		string text1 = "pixel (x,y),r (" + to_string(center.x) + "," + to_string(center.y) + ")" + "," + to_string(radius);
+		cv::putText(color_img, text1, cv::Point(10, 10), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
+		string text2 = "camera(x,y,z) (" + to_string(camera_coord.x / 1000.0) + "," + to_string(camera_coord.y / 1000.0) + "," + to_string(camera_coord.z / 1000.0) + ")";
+		cv::putText(color_img, text2, cv::Point(10, 30), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
+		string text3 = "world (x,y,z) (" + to_string(world_coord.x / 1000.0) + "," + to_string(world_coord.y / 1000.0) + "," + to_string(world_coord.z / 1000.0) + ")";
+		cv::putText(color_img, text3, cv::Point(10, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
+		string text4 = "time/s " + to_string(elapsed / 1000.0);
+		cv::putText(color_img, text4, cv::Point(10, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.7, cv::Scalar(0, 0, 255));
+		// return color_img;
 	}
 
 	/*@ brief根据轮廓计算面积
@@ -748,11 +660,45 @@ private:
 				}
 			}
 		}
+
+		cout << "center depthValue: " << depth_value << endl;
+		cout << "min    depthValue: " << min_depth_value << endl;
+		// if (depth_value - min_depth_value > 1)
 		{
-			// cout << "center depthValue: " << depth_value << endl;
-			// cout << "min    depthValue: " << min_depth_value << endl;
-		}
-		//××最小深度赋值××
+
+			const int width = (obj_info.y + rect_radius*4) > depth_img.rows ? depth_img.rows - 1 : (rect_radius*4);
+			const int height = (obj_info.x + rect_radius*2) > depth_img.cols ? depth_img.cols - 1 : (rect_radius*2);
+
+			cv::Rect depthroi = cv::Rect(left, top, width, height);
+			cout << "rect" << depthroi << endl;
+			// cout << depth_img(depthroi) << endl;
+			cv::Mat tmp_img_u8;
+			depth_img.convertTo(tmp_img_u8, CV_8UC1, 1.0 / 256);
+			cv::Mat tmp_img_u8_rect = tmp_img_u8(depthroi);
+			if (tmp_img_u8_rect.type() == CV_8UC1)
+				cout << "qqqqqq" << endl;
+			else
+				cout << "bbbbbbbbbbbbbbbbb" << endl;
+				cv::Mat m_color;
+			imwrite("/home/free/u8.jpg",tmp_img_u8);
+
+    cv::applyColorMap(tmp_img_u8_rect, m_color, cv::COLORMAP_JET);
+
+			imshow("hhh", m_color);
+			imwrite("/home/free/denth.jpg",m_color);
+			waitKey(30);
+
+			cv::Mat hist_info;
+			const int hist_size = 128;
+			float hist_range[] = {1, 128};
+			const float *hist_ranges[] = {hist_range};
+			const int chs = 0; // image channels
+			// 这里对应图5中间那张图，计算某个亮度的像素的数量
+			/* compute histogram from depth image */
+			cv::calcHist(&tmp_img_u8_rect, 1, &chs, cv::Mat(), hist_info, 1, &hist_size,
+						 &hist_ranges[0]);
+			cout << hist_info << endl;
+		} //××最小深度赋值××
 		depth_value = min_depth_value;
 
 		// 这一行深度数据是彩色数据的第几行
@@ -777,8 +723,8 @@ private:
 		MatrixXf camera_coord(4, 1);
 		camera_coord << camera_coord_xyz.x, camera_coord_xyz.y, camera_coord_xyz.z, 1;
 
-		// cout << "camera_coord" << endl
-		// 	 << camera_coord << endl;
+		cout << "camera_coord" << endl
+			 << camera_coord << endl;
 		//世界坐标计算，他应该是（4,1）的，但是如果不指定会怎样呢？
 		MatrixXf world_coord(4, 1);
 		world_coord = hand_eye_calib * camera_coord;
@@ -822,7 +768,6 @@ private:
 			cout << "ERROR：没有找到手眼标定文件" << endl;
 			//第一次用上这个变量，没读到文件就直接停止
 			// isRunning = false;
-
 			Matrix4f ERROR_RET;
 			ERROR_RET << 0, 0, 0, 0,
 				0, 0, 0, 0,
@@ -889,10 +834,10 @@ int main(int argc, char **argv)
 
 	string topic_ball_pose_pub = "/obj_detect/tennis_pose";
 
-	ROS_INFO("---recv topic color: %s ---", topic_color.c_str());
-	ROS_INFO("---recv topic depth: %s ---", topic_depth.c_str());
+	ROS_INFO("---recv topic color: %s ---\n", topic_color.c_str());
+	ROS_INFO("---recv topic depth: %s ---\n", topic_depth.c_str());
 
-	ROS_INFO("---publ topic world: %s ---", topic_ball_pose_pub.c_str());
+	ROS_INFO("---publ topic world: %s ---\n", topic_ball_pose_pub.c_str());
 
 	Detector detector(topic_color, topic_depth, topic_ball_pose_pub);
 

@@ -1,0 +1,13 @@
+<launch>
+
+    <arg name="detector_type" default="kinectdk_detected"/>
+    <!-- <arg name="celex_mode" default="Event_Off_Pixel_Timestamp_Mode"/> -->
+
+    
+    <node pkg="kinectdk_detected" type="$(arg detector_type)" name="kinectdk_detected_node" output="screen">
+        <!-- <remap from="" to=""/> -->
+        <!-- <param name="celex_mode" value="$(arg celex_mode)" /> -->
+    </node>
+
+
+</launch>
